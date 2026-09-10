@@ -1,0 +1,13 @@
+【7-Zip 插件扩展目录 (Formats 说明)】
+
+最新的官方 7-Zip 原生即可直接解压：
+- NSIS (.exe) 安装包
+- CAB 压缩柜文件
+- 常见自解压可执行程序 (7z SFX, Zip SFX 等)
+- MSI 安装包
+- 常用压缩卷 (zip, 7z, tar, iso, wim 等)
+
+如果您需要解包更多特殊或老式的安装程序（如 InstallShield、Wise Installer、专用 Inno 模块等）：
+可将第三方解包插件（如 InstallExplorer 的 64位 dll 模块、TC7z WCX 插件等）放入本 Formats 文件夹中。
+7-Zip 引擎在运行时会自动扫描并加载此目录中的所有解码插件！
+

@@ -1,0 +1,13 @@
+﻿# Runtime Logs
+logs/*.log
+*.log
+
+# Temp directories
+temp_closed_loop_test/
+*_extracted/
+*.tmp
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
