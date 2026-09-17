@@ -1,9 +1,10 @@
-﻿# InstallerExtractor (安装包全能解压与降权安装套件)
+# InstallerExtractor (安装包全能解压与降权安装套件)
 
 [![Platform](https://img.shields.io/badge/Platform-Windows%207%2F8%2F10%2F11%20%7C%20Server-blue.svg)](https://github.com/makemk/installer-extractor-gui)
 [![Privilege](https://img.shields.io/badge/Privilege-Zero--Admin%20%7C%20Non--Privileged-success.svg)](https://github.com/makemk/installer-extractor-gui)
 [![AI-Ready](https://img.shields.io/badge/AI%20Integration-Native%20CLI%20%26%20JSON-orange.svg)](https://github.com/makemk/installer-extractor-gui)
 [![Build](https://img.shields.io/badge/Build-Zero--Dependency%20(csc.exe)-brightgreen.svg)](https://github.com/makemk/installer-extractor-gui)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-blue.svg)](https://github.com/makemk/installer-extractor-gui/releases)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **专为「无管理员权限环境」与「AI Agent 自动化流水线」打造的 Windows 全能安装包物理脱壳与绿色部署套件。**
@@ -65,6 +66,34 @@
 
 ---
 
+## ⚠️ 核心避坑指南与典型实战场景
+
+### 1. 🛡️ Electron-Builder / NSIS 双层嵌套封装（典型代表：DeepSeek Harness DSH Desktop）
+
+- **🚨 故障现象**：
+  使用通用解压工具或自动化流水线解包后，程序看似“解压完成”，但双击启动主程序直接抛出致命异常并弹窗崩溃：
+  ```text
+  A JavaScript error occurred in the main process
+  Uncaught Exception:
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '...\resources\app\out\main\index.js'
+  ```
+- **🔍 深度根因剖析**：
+  现代跨平台 Electron 应用广泛使用 `electron-builder` 构建 Windows 单文件安装包（常见为 `*-windows-x64-setup.exe`）。此类安装包本质是 **双层嵌套载荷结构（2-Stage Packaging）**：
+  1. **外壳层（NSIS Wrapper）**：通常仅含 10 个安装向导临时辅助 DLL/BMP（如 `nsDialogs.dll`、`System.dll`、`modern-wizard.bmp` 等），其文件列表极小；
+  2. **核心载荷层（Core Payload）**：**真正的全量程序主体（包括 Electron 渲染内核、数百个 Node 模块、以及 `resources\app\out\main\index.js` 等核心主进程业务脚本，往往达上万个文件、近 600MB）被全部封包压缩在内层的 `$PLUGINSDIR\app-64.7z`（或 `app-32.7z`）中**。
+  
+  **常见致命误区**：如果仅对外部 `.exe` 执行了一级解包，输出目录只会释放出空壳和残缺目录，导致主进程模块 `index.js` 物理缺失，Electron 引擎启动即死。
+
+- **💡 闭环规避规范与标准处理流程**：
+  1. **一级解压后自动探测**：每次解压执行完成后，必须主动探测目标目录中是否存在 `$PLUGINSDIR\app-64.7z`、`$PLUGINSDIR\app-32.7z` 或根目录残留的 `.7z` 核心压缩卷；
+  2. **自动二级递归脱壳**：一旦发现嵌套载荷，无须人工干预，引擎自动调用 7-Zip 内核对该内嵌 `.7z` 启动二级深度物理解压，将万级核心文件完整平铺释放至程序主目录；
+  3. **附属清理与整理**：
+     - 将 `$R0\` 目录释放的官方 `Uninstall *.exe` 智能迁移至程序根目录；
+     - 彻底清理 `$PLUGINSDIR` 与 `$R0` 等临时引导残留；
+  4. **主进程入口完整性自检**：检查 `resources\app\package.json` 中的 `"main"` 指向字段（如 `./out/main/index.js`），确保目标文件物理存在且字节大于 0。
+
+---
+
 ## 🚀 快速上手
 
 ### 方式一：面向人类用户的桌面端 (`InstallerExtractorGUI.exe`)
@@ -97,7 +126,32 @@ InstallerExtractorCLI.exe -i "Logic-2.4.14-win.exe" --detect --json
 
 #### 2. 无特权物理脱壳 (Extract)
 ```bash
-InstallerExtractorCLI.exe -i "python-3.12.msi" -o "C:\Portable\python" --json
+InstallerExtractorCLI.exe -i "dsh-desktop-windows-x64-setup.exe" -o "C:\Portable\DSH" --json
+```
+**JSON 输出示例（AI 专用，直接提供主执行程序，零额外猜测）：**
+```json
+{
+  "success": true,
+  "mode": "extract",
+  "source": "C:\\Downloads\\dsh-desktop-windows-x64-setup.exe",
+  "target": "C:\\Portable\\DSH",
+  "fileCount": 15334,
+  "totalBytes": 612202257,
+  "mainExecutable": "C:\\Portable\\DSH\\DSH Desktop.exe",
+  "executables": [
+    "C:\\Portable\\DSH\\DSH Desktop.exe",
+    "C:\\Portable\\DSH\\Uninstall DSH Desktop.exe"
+  ],
+  "nestedPayloadsDetected": true,
+  "drivers": {
+    "detected": false,
+    "count": 0,
+    "installAttempted": false,
+    "installSuccess": false
+  },
+  "logFile": "C:\\Tools\\logs\\extractor_20260917_114712_10764.log",
+  "exitCode": 0
+}
 ```
 
 #### 3. 硬件上位机自动解包并安装驱动

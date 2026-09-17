@@ -251,6 +251,10 @@ namespace InstallerExtractorGUI
 
             int fileCount = 0;
             long totalBytes = 0;
+            List<string> allExes = new List<string>();
+            string mainExe = null;
+            bool nestedPayloadsDetected = logs.Exists(delegate(string l) { return l.Contains("[双层嵌套探测]"); });
+
             if (Directory.Exists(target))
             {
                 try
@@ -260,7 +264,12 @@ namespace InstallerExtractorGUI
                     foreach (var f in files)
                     {
                         totalBytes += new FileInfo(f).Length;
+                        if (f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        {
+                            allExes.Add(f);
+                        }
                     }
+                    mainExe = DetectMainExecutable(target, source, allExes);
                 }
                 catch { }
             }
@@ -275,6 +284,16 @@ namespace InstallerExtractorGUI
                 sb.AppendFormat("\"target\":\"{0}\",", EscapeJson(target));
                 sb.AppendFormat("\"fileCount\":{0},", fileCount);
                 sb.AppendFormat("\"totalBytes\":{0},", totalBytes);
+
+                sb.AppendFormat("\"mainExecutable\":{0},", mainExe != null ? "\"" + EscapeJson(mainExe) + "\"" : "null");
+                sb.Append("\"executables\":[");
+                for (int e = 0; e < allExes.Count; e++)
+                {
+                    sb.Append("\"" + EscapeJson(allExes[e]) + "\"");
+                    if (e < allExes.Count - 1) sb.Append(",");
+                }
+                sb.Append("],");
+                sb.AppendFormat("\"nestedPayloadsDetected\":{0},", nestedPayloadsDetected ? "true" : "false");
 
                 // 驱动信息
                 sb.Append("\"drivers\":{");
@@ -302,6 +321,14 @@ namespace InstallerExtractorGUI
                 Console.WriteLine("Target Directory : " + target);
                 Console.WriteLine("Extracted Files  : " + fileCount);
                 Console.WriteLine("Total Size       : " + (totalBytes / 1024.0 / 1024.0).ToString("F2") + " MB");
+                if (!string.IsNullOrEmpty(mainExe))
+                {
+                    Console.WriteLine("Main Executable  : " + mainExe);
+                }
+                if (nestedPayloadsDetected)
+                {
+                    Console.WriteLine("Nested Unpacked  : Yes (Electron-Builder 2-stage payload fully extracted)");
+                }
                 Console.WriteLine("Drivers Detected : " + (driverScan.HasDrivers ? (driverScan.InfFiles.Count + " inf files") : "None"));
                 if (driverInstallAttempted)
                 {
@@ -385,6 +412,78 @@ namespace InstallerExtractorGUI
                 }
             }
             return sb.ToString();
+        }
+
+        private static string DetectMainExecutable(string targetDir, string sourceFile, List<string> allExes)
+        {
+            if (allExes == null || allExes.Count == 0) return null;
+
+            var candidates = new List<string>();
+            foreach (var exe in allExes)
+            {
+                string name = Path.GetFileName(exe).ToLowerInvariant();
+                if (name.StartsWith("uninstall") || name.StartsWith("unins") ||
+                    name == "elevate.exe" || name == "7z.exe" || name == "innounp.exe" ||
+                    name == "crashpad_handler.exe" || name == "notification_helper.exe")
+                {
+                    continue;
+                }
+                candidates.Add(exe);
+            }
+
+            if (candidates.Count == 0) return allExes[0];
+
+            // 1. 优先检查根目录下的候选可执行文件
+            var rootCandidates = new List<string>();
+            foreach (var c in candidates)
+            {
+                if (string.Equals(Path.GetDirectoryName(c), targetDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    rootCandidates.Add(c);
+                }
+            }
+
+            if (rootCandidates.Count == 1) return rootCandidates[0];
+
+            // 2. 针对 Electron 等跨平台应用，扫描 package.json 中的名称或 product 名称
+            string pkgJson = Path.Combine(targetDir, @"resources\app\package.json");
+            if (!File.Exists(pkgJson))
+            {
+                pkgJson = Path.Combine(targetDir, "package.json");
+            }
+            if (File.Exists(pkgJson))
+            {
+                try
+                {
+                    string content = File.ReadAllText(pkgJson);
+                    foreach (var c in (rootCandidates.Count > 0 ? rootCandidates : candidates))
+                    {
+                        string baseName = Path.GetFileNameWithoutExtension(c);
+                        if (content.IndexOf(baseName, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            return c;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 3. 匹配原始安装包的基础名称（去掉 setup/win/x64 等后缀）
+            string srcBase = Path.GetFileNameWithoutExtension(sourceFile).ToLowerInvariant()
+                .Replace("-setup", "").Replace("_setup", "").Replace("setup", "")
+                .Replace("-windows", "").Replace("-win", "").Replace("-x64", "").Replace("-x86", "");
+
+            foreach (var c in (rootCandidates.Count > 0 ? rootCandidates : candidates))
+            {
+                string cBase = Path.GetFileNameWithoutExtension(c).ToLowerInvariant().Replace(" ", "").Replace("-", "").Replace("_", "");
+                string sBase = srcBase.Replace(" ", "").Replace("-", "").Replace("_", "");
+                if (cBase.Contains(sBase) || sBase.Contains(cBase))
+                {
+                    return c;
+                }
+            }
+
+            return rootCandidates.Count > 0 ? rootCandidates[0] : candidates[0];
         }
     }
 }

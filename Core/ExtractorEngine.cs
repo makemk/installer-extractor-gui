@@ -364,6 +364,7 @@ namespace InstallerExtractorGUI.Core
 
                 if ((exitCode == 0 || exitCode == 1) && DirectoryHasFiles(options.TargetDirectory))
                 {
+                    PostProcessNestedPayloads(options.TargetDirectory, sevenZip, log);
                     progress(100);
                     log("[成功] 7-Zip 引擎成功解压提取完成！");
                     log("[位置] 文件已存放至: " + options.TargetDirectory);
@@ -523,6 +524,55 @@ namespace InstallerExtractorGUI.Core
             catch
             {
                 return false;
+            }
+        }
+
+        private static void PostProcessNestedPayloads(string targetDir, string sevenZip, Action<string> log)
+        {
+            try
+            {
+                // 1. 深度处理 Electron-Builder NSIS 双层嵌套架构 ($PLUGINSDIR\app-*.7z)
+                string pluginsDir = Path.Combine(targetDir, "$PLUGINSDIR");
+                if (Directory.Exists(pluginsDir))
+                {
+                    string[] nestedArchives = Directory.GetFiles(pluginsDir, "app-*.7z", SearchOption.TopDirectoryOnly);
+                    foreach (var archive in nestedArchives)
+                    {
+                        log("[双层嵌套探测] 检测到 Electron-Builder 核心载荷 (" + Path.GetFileName(archive) + ")，正在启动二级深度物理解包...");
+                        AppLogger.Info("Detected nested archive: " + archive);
+                        string subArgs = string.Format("x \"{0}\" -o\"{1}\" -y", archive, targetDir);
+                        int subExit = RunProcess(sevenZip, subArgs, null, true, log);
+                        if (subExit == 0 || subExit == 1)
+                        {
+                            log("[成功] 二级核心载荷解压完成！");
+                            AppLogger.Info("Secondary nested archive extracted: " + archive);
+                        }
+                    }
+
+                    // 2. 提取 $R0 目录下释放的官方卸载程序（如有）
+                    string r0Dir = Path.Combine(targetDir, "$R0");
+                    if (Directory.Exists(r0Dir))
+                    {
+                        foreach (var uninst in Directory.GetFiles(r0Dir, "Uninstall*.exe"))
+                        {
+                            string dest = Path.Combine(targetDir, Path.GetFileName(uninst));
+                            try
+                            {
+                                File.Copy(uninst, dest, true);
+                                AppLogger.Info("Moved uninstaller to root: " + dest);
+                            }
+                            catch { }
+                        }
+                        try { Directory.Delete(r0Dir, true); } catch { }
+                    }
+
+                    // 3. 彻底清理 $PLUGINSDIR 临时引导残留
+                    try { Directory.Delete(pluginsDir, true); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("PostProcessNestedPayloads encountered warning: " + ex.Message);
             }
         }
 

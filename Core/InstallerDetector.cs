@@ -69,18 +69,7 @@ namespace InstallerExtractorGUI.Core
                         int read = fs.Read(buffer, 0, buffer.Length);
                         string ascii = Encoding.ASCII.GetString(buffer, 0, read);
 
-                        // 7z SFX 特征 (37 7A BC AF 27 1C)
-                        if (ContainsBytes(buffer, new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C }))
-                        {
-                            result.Type = InstallerType.SevenZipSfx;
-                            result.DisplayName = "7-Zip 自解压程序 (7z SFX)";
-                            result.Description = "内置 7z 压缩卷，支持 7z CLI 或 tar 直接解压提取文件。";
-                            result.RecommendedSilentArgs = "-y";
-                            result.CanDirectExtract = true;
-                            return result;
-                        }
-
-                        // Inno Setup
+                        // Inno Setup (必须优先于纯压缩特征探测)
                         if (ascii.IndexOf("Inno Setup", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             ascii.IndexOf("InnoCallback", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
@@ -88,18 +77,35 @@ namespace InstallerExtractorGUI.Core
                             result.DisplayName = "Inno Setup 安装包";
                             result.Description = "支持降权静默部署 (/VERYSILENT /DIR=...) 或借助解包工具直接提取。";
                             result.RecommendedSilentArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
-                            result.CanDirectExtract = true; // 7z / innoextract
+                            result.CanDirectExtract = true; // 7z / innounp
                             return result;
                         }
 
-                        // NSIS
+                        // NSIS (包含 Electron-Builder 双层嵌套 NSIS，必须优先于内部嵌合的 7z SFX 卷探测)
                         if (ascii.IndexOf("NullsoftInst", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             ascii.IndexOf("Nullsoft", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             result.Type = InstallerType.Nsis;
-                            result.DisplayName = "NSIS (Nullsoft) 安装包";
-                            result.Description = "支持 7-Zip 直接解压提取，或使用降权静默参数 (/S /D=...)。";
+                            bool isElectron = (ascii.IndexOf("electron-builder", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                               ascii.IndexOf("app-64.7z", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                               ascii.IndexOf("app-32.7z", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                            result.DisplayName = isElectron ? "NSIS (Electron-Builder 双层架构)" : "NSIS (Nullsoft) 安装包";
+                            result.Description = isElectron
+                                ? "Electron-Builder 嵌套安装包，内部嵌合 7z 核心载荷，套件已原生适配自动二级深度脱壳。"
+                                : "支持 7-Zip 直接解压提取，或使用降权静默参数 (/S /D=...)。";
                             result.RecommendedSilentArgs = "/S";
+                            result.CanDirectExtract = true;
+                            return result;
+                        }
+
+                        // 7z SFX 独立自解压程序 (37 7A BC AF 27 1C)
+                        if (ContainsBytes(buffer, new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C }))
+                        {
+                            result.Type = InstallerType.SevenZipSfx;
+                            result.DisplayName = "7-Zip 自解压程序 (7z SFX)";
+                            result.Description = "内置 7z 压缩卷，支持 7z CLI 或 tar 直接解压提取文件。";
+                            result.RecommendedSilentArgs = "-y";
                             result.CanDirectExtract = true;
                             return result;
                         }
